@@ -19,7 +19,8 @@ upsetly(
   title = "UpSet (plotly)",
   height = 500,
   width = NULL,
-  members_per_line = 20
+  members_per_line = 20,
+  ...
 )
 }
 \arguments{
