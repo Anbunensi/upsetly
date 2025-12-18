@@ -83,7 +83,7 @@ upsetly <- function(
   set_cols = NULL,
   id_col = NULL,
   min_intersection_size = 1,
-  max_n_intersections = NULL,
+  max_n_intersections = NULL,  # 图上最多显示的交集数
   point_size = 8,
   bar_color_sets = "black",
   bar_color_inters = "black",
@@ -94,7 +94,7 @@ upsetly <- function(
   height = 500,
   width = NULL,
   members_per_line = 20,
-  box_id = NULL        # 要写入的 <pre> 的 id，例如 "t1"
+  box_id = NULL                 # 要写入的 <pre> 的 id，例如 "gsea_c6"
 ) {
   if (!requireNamespace("plotly", quietly = TRUE)) {
     stop("Please install the 'plotly' package.")
@@ -108,8 +108,10 @@ upsetly <- function(
     set_cols <- setdiff(names(x), if (is.null(id_col)) character(0) else id_col)
   }
   if (!all(set_cols %in% names(x))) {
-    stop("These set_cols are not in the data: ",
-         paste(setdiff(set_cols, names(x)), collapse = ", "))
+    stop(
+      "These set_cols are not in the data: ",
+      paste(setdiff(set_cols, names(x)), collapse = ", ")
+    )
   }
   if (!is.null(id_col) && !id_col %in% names(x)) {
     stop("id_col is not in the data: ", id_col)
@@ -120,7 +122,7 @@ upsetly <- function(
     id_col <- ".elem_id"
   }
 
-  # 0/1 matrix
+  ## 0/1 matrix ---------------------------------------------------------------
   mat <- x[, set_cols, drop = FALSE]
   for (nm in set_cols) {
     v <- mat[[nm]]
@@ -133,25 +135,29 @@ upsetly <- function(
     }
   }
 
-  # size of each set
+  ## set sizes ----------------------------------------------------------------
   set_sizes <- colSums(mat, na.rm = TRUE)
-  if (all(set_sizes == 0)) stop("All set columns are 0; no elements belong to these sets.")
+  if (all(set_sizes == 0)) {
+    stop("All set columns are 0; no elements belong to these sets.")
+  }
 
-  # sort sets by size (descending)
   ord <- order(set_sizes, decreasing = TRUE)
   set_cols  <- set_cols[ord]
   set_sizes <- set_sizes[ord]
 
   set_sizes_df <- tibble::tibble(
-    set = factor(names(set_sizes), levels = names(set_sizes)),
+    set  = factor(names(set_sizes), levels = names(set_sizes)),
     size = as.numeric(set_sizes)
   )
   set_levels <- names(set_sizes)
 
-  # combination key for each row
+  ## intersections ------------------------------------------------------------
   combo_df <- as.data.frame(mat[, set_cols, drop = FALSE])
   combo_df[[id_col]] <- x[[id_col]]
-  combo_df$.combo_key <- apply(as.matrix(mat[, set_cols, drop = FALSE]), 1, paste, collapse = "|")
+  combo_df$.combo_key <- apply(
+    as.matrix(mat[, set_cols, drop = FALSE]),
+    1, paste, collapse = "|"
+  )
 
   inter_df <- combo_df %>%
     dplyr::group_by(.combo_key) %>%
@@ -162,9 +168,11 @@ upsetly <- function(
     ) %>%
     dplyr::filter(count >= min_intersection_size)
 
-  if (nrow(inter_df) == 0) stop("No intersections with size >= min_intersection_size.")
+  if (nrow(inter_df) == 0) {
+    stop("No intersections with size >= min_intersection_size.")
+  }
 
-  # expand back to 0/1 per set
+  ## expand back 0/1 per set -------------------------------------------------
   comb_mat_chr <- strsplit(inter_df$.combo_key, "\\|")
   comb_mat <- do.call(rbind, comb_mat_chr)
   comb_mat <- apply(comb_mat, 2, as.integer)
@@ -172,21 +180,7 @@ upsetly <- function(
   comb_mat <- as.data.frame(comb_mat, stringsAsFactors = FALSE)
   inter_df <- dplyr::bind_cols(inter_df, comb_mat)
 
-  # sort by size and apply max_n_intersections
-  inter_df <- inter_df %>% dplyr::arrange(desc(count))
-  if (!is.null(max_n_intersections)) {
-    inter_df <- inter_df[seq_len(min(max_n_intersections, nrow(inter_df))), , drop = FALSE]
-  }
-  inter_df$combo_index <- seq_len(nrow(inter_df))
-
-  # intersection names
-  make_name <- function(row) {
-    included <- set_cols[as.integer(row[set_cols]) == 1]
-    if (length(included) == 0) "Ø" else paste(included, collapse = " & ")
-  }
-  inter_df$combo_name <- apply(inter_df[, set_cols, drop = FALSE], 1, make_name)
-
-  # Members: truncate & wrap
+  ## 成员字符串包装函数 -------------------------------------------------------
   wrap_members <- function(members_str,
                            n_per_line = 20,
                            max_ids = NULL) {
@@ -201,32 +195,56 @@ upsetly <- function(
       truncated <- TRUE
     }
 
-    idx <- ceiling(seq_along(v) / n_per_line)
+    idx   <- ceiling(seq_along(v) / n_per_line)
     lines <- tapply(v, idx, function(x) paste(x, collapse = ", "))
-    out <- paste(lines, collapse = "<br>")
+    out   <- paste(lines, collapse = "<br>")
 
     if (truncated) out <- paste0(out, "<br>... (truncated)")
     out
   }
 
-  inter_df$members_wrapped <- vapply(
+  ## 完整版本（给 <pre> 用）+ 图上版本（受 max_n_intersections 控制） --------
+  inter_df$members_wrapped_all <- vapply(
     inter_df$members,
-    FUN = wrap_members,
+    FUN       = wrap_members,
     FUN.VALUE = character(1),
     n_per_line = members_per_line,
-    max_ids = max_n_intersections
+    max_ids    = NULL          # 完整
   )
 
+  inter_df$members_wrapped <- vapply(
+    inter_df$members,
+    FUN       = wrap_members,
+    FUN.VALUE = character(1),
+    n_per_line = members_per_line,
+    max_ids    = max_n_intersections  # 图上可以被截断
+  )
+
+  ## intersection names -------------------------------------------------------
+  make_name <- function(row) {
+    included <- set_cols[as.integer(row[set_cols]) == 1]
+    if (length(included) == 0) "Ø" else paste(included, collapse = " & ")
+  }
+  inter_df$combo_name <- apply(inter_df[, set_cols, drop = FALSE], 1, make_name)
+
+  ## hover text（仍然可以是截断版）-------------------------------------------
   inter_df$hover_bar <- paste0(
     "Intersection: ", inter_df$combo_name,
     "<br>Size: ", inter_df$count,
     "<br>Members:<br>", inter_df$members_wrapped
   )
 
-  # dot matrix
+  ## 按 size 排序，并只保留前 max_n_intersections 个用于作图 -----------------
+  inter_df <- inter_df %>% dplyr::arrange(dplyr::desc(count))
+  if (!is.null(max_n_intersections)) {
+    inter_df <- inter_df[seq_len(min(max_n_intersections, nrow(inter_df))), , drop = FALSE]
+  }
+  inter_df$combo_index <- seq_len(nrow(inter_df))
+
+  ## dot matrix ---------------------------------------------------------------
   dot_df <- tidyr::expand_grid(
     combo_index = inter_df$combo_index,
-    set = factor(set_cols, levels = set_levels)
+    set         = factor(set_cols, levels = set_levels)
   ) %>%
     dplyr::left_join(inter_df[, c("combo_index", set_cols)], by = "combo_index") %>%
     dplyr::mutate(
@@ -240,7 +258,7 @@ upsetly <- function(
       )
     )
 
-  y_map <- setNames(seq_along(set_levels), set_levels)
+  y_map    <- stats::setNames(seq_along(set_levels), set_levels)
   dot_df$y <- y_map[as.character(dot_df$set)]
 
   dot_df$hover_dot <- paste0(
@@ -259,54 +277,57 @@ upsetly <- function(
       .groups = "drop"
     )
 
+  ## plotly -------------------------------------------------------------------
   fig <- plotly::plot_ly()
 
   # 1) intersection bars
   fig <- fig %>%
     plotly::add_bars(
-      data = inter_df,
-      x = ~combo_index,
-      y = ~count,
-      marker = list(color = bar_color_inters),
+      data      = inter_df,
+      x         = ~combo_index,
+      y         = ~count,
+      marker    = list(color = bar_color_inters),
       hovertext = ~hover_bar,
       hoverinfo = "text",
-      name = "Intersections",
-      yaxis = "y1"
+      # 完整 members 文本放在 customdata 里，给 JS 用
+      customdata = ~members_wrapped_all,
+      name      = "Intersections",
+      yaxis     = "y1"
     )
 
   # 2) set sizes
-  max_size <- max(set_sizes_df$size)
+  max_size     <- max(set_sizes_df$size)
   pretty_breaks <- pretty(c(0, max_size))
-  x2_tickvals <- -pretty_breaks
-  x2_ticktext <- pretty_breaks
+  x2_tickvals   <- -pretty_breaks
+  x2_ticktext   <- pretty_breaks
 
   fig <- fig %>%
     plotly::add_bars(
-      data = set_sizes_df,
-      x = ~(-size),
-      y = ~as.numeric(set),
+      data       = set_sizes_df,
+      x          = ~(-size),
+      y          = ~as.numeric(set),
       orientation = "h",
-      marker = list(color = bar_color_sets),
-      hovertext = ~paste0(as.character(set), "<br>Numbers: ", size),
-      hoverinfo = "text",
-      name = "Set size",
-      xaxis = "x2",
-      yaxis = "y2"
+      marker     = list(color = bar_color_sets),
+      hovertext  = ~paste0(as.character(set), "<br>Numbers: ", size),
+      hoverinfo  = "text",
+      name       = "Set size",
+      xaxis      = "x2",
+      yaxis      = "y2"
     )
 
   # 3) segments
   if (nrow(seg_df) > 0) {
     fig <- fig %>%
       plotly::add_segments(
-        data = seg_df,
-        x = ~combo_index,
-        xend = ~combo_index,
-        y = ~y_min,
-        yend = ~y_max,
-        line = list(color = line_color, width = 1),
+        data      = seg_df,
+        x         = ~combo_index,
+        xend      = ~combo_index,
+        y         = ~y_min,
+        yend      = ~y_max,
+        line      = list(color = line_color, width = 1),
         hoverinfo = "none",
-        xaxis = "x1",
-        yaxis = "y2",
+        xaxis     = "x1",
+        yaxis     = "y2",
         showlegend = FALSE
       )
   }
@@ -314,19 +335,19 @@ upsetly <- function(
   # 4) dots
   fig <- fig %>%
     plotly::add_trace(
-      data = dot_df,
-      x = ~combo_index,
-      y = ~y,
-      type = "scatter",
-      mode = "markers",
-      marker = ~list(
+      data      = dot_df,
+      x         = ~combo_index,
+      y         = ~y,
+      type      = "scatter",
+      mode      = "markers",
+      marker    = ~list(
         color = ifelse(value == 1, active_color, inactive_color),
-        size = point_size
+        size  = point_size
       ),
       hovertext = ~hover_dot,
       hoverinfo = "text",
-      xaxis = "x1",
-      yaxis = "y2",
+      xaxis     = "x1",
+      yaxis     = "y2",
       showlegend = FALSE
     )
 
@@ -337,44 +358,44 @@ upsetly <- function(
       xaxis = list(
         domain = c(0.25, 1),
         anchor = "y1",
-        title = "",
+        title  = "",
         showticklabels = FALSE,
         tickfont = list(color = "black")
       ),
       xaxis2 = list(
         domain = c(0, 0.2),
         anchor = "y2",
-        title = list(text = "Numbers", font = list(color = "black")),
-        range = c(-max_size, 0),
-        tickmode = "array",
-        tickvals = x2_tickvals,
-        ticktext = x2_ticktext,
-        zeroline = TRUE,
+        title  = list(text = "Numbers", font = list(color = "black")),
+        range  = c(-max_size, 0),
+        tickmode  = "array",
+        tickvals  = x2_tickvals,
+        ticktext  = x2_ticktext,
+        zeroline  = TRUE,
         zerolinecolor = "black",
         zerolinewidth = 1,
-        tickfont = list(color = "black")
+        tickfont  = list(color = "black")
       ),
       yaxis = list(
         domain = c(0.5, 1),
-        title = list(text = "Intersections", font = list(color = "black")),
+        title  = list(text = "Intersections", font = list(color = "black")),
         tickfont = list(color = "black")
       ),
       yaxis2 = list(
         domain = c(0, 0.5),
-        title = list(text = "", font = list(color = "black")),
+        title  = list(text = "", font = list(color = "black")),
         tickmode = "array",
         tickvals = seq_along(set_levels),
         ticktext = set_levels,
-        anchor = "x2",
-        side   = "right",
+        anchor   = "x2",
+        side     = "right",
         tickfont = list(color = "black")
       ),
       showlegend = FALSE,
       height = height,
-      width = width
+      width  = width
     )
 
-  # JS：只绑定到指定 box_id，对不到就什么也不做（便于排错）
+  ## JS：使用 box_id 对应的 <pre>，hover 用 hovertext，click 用 customdata(完整) ----
   js <- sprintf("
   function(el, x) {
     var boxId = %s;
@@ -383,7 +404,7 @@ upsetly <- function(
     var pre = document.getElementById(boxId);
     if (!pre) return;
 
-    // 在 htmlwidgets 里，el 本身就是 plotly graph div
+    // 对于 htmlwidgets 的 plotly，el 本身就是图形容器
     var gd = el;
 
     var locked = false;
@@ -404,22 +425,26 @@ upsetly <- function(
     if (gd && typeof gd.on === 'function') {
       gd.on('plotly_hover', function(ev) {
         if (!ev || !ev.points || !ev.points.length) return;
-        var pt = ev.points[0];
+        var pt  = ev.points[0];
         var txt = htmlToPlain(pt.hovertext || '');
-        setHoverText(txt, false);
+        setHoverText(txt, false);     // hover: 图上的（可截断）
       });
 
       gd.on('plotly_click', function(ev) {
         if (!ev || !ev.points || !ev.points.length) return;
         var pt = ev.points[0];
-        var txt = htmlToPlain(pt.hovertext || '');
+
+        // 完整 members 文本在 customdata 里
+        var fullHtml = pt.customdata || pt.hovertext || '';
+        var txt      = htmlToPlain(fullHtml);
+
         locked = true;
-        setHoverText(txt, true);
+        setHoverText(txt, true);      // click: 写入完整文本
       });
 
       gd.on('plotly_doubleclick', function() {
         locked = false;
-        setHoverText('', true);
+        setHoverText('', true);       // double click: 清空并解锁
       });
     }
   }",
