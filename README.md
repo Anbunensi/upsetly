@@ -109,6 +109,7 @@ upsetly(
   set_cols = c("A", "B", "C"),
   id_col = "gene",
   max_n_intersections = 50,
+  box_id = "members_box",
   members_per_line = 10
 )
 ```
