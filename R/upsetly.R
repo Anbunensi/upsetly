@@ -70,6 +70,7 @@
 #'   x = df,
 #'   set_cols = c("A", "B", "C"),
 #'   id_col = "gene",
+#'   box_id = "test",
 #'   max_n_intersections = 50,
 #'   members_per_line = 10
 #' )
@@ -92,7 +93,8 @@ upsetly <- function(
   title = "UpSet (plotly)",
   height = 500,
   width = NULL,
-  members_per_line = 20
+  members_per_line = 20,
+  box_id = NULL        # 要写入的 <pre> 的 id，例如 "t1"
 ) {
   if (!requireNamespace("plotly", quietly = TRUE)) {
     stop("Please install the 'plotly' package.")
@@ -100,10 +102,7 @@ upsetly <- function(
   if (!requireNamespace("htmlwidgets", quietly = TRUE)) {
     stop("Please install the 'htmlwidgets' package.")
   }
-  if (!requireNamespace("htmltools", quietly = TRUE)) {
-    stop("Please install the 'htmltools' package.")
-  }
-  
+
   stopifnot(is.data.frame(x))
   if (is.null(set_cols)) {
     set_cols <- setdiff(names(x), if (is.null(id_col)) character(0) else id_col)
@@ -115,12 +114,12 @@ upsetly <- function(
   if (!is.null(id_col) && !id_col %in% names(x)) {
     stop("id_col is not in the data: ", id_col)
   }
-  
+
   if (is.null(id_col)) {
     x$.elem_id <- seq_len(nrow(x))
     id_col <- ".elem_id"
   }
-  
+
   # 0/1 matrix
   mat <- x[, set_cols, drop = FALSE]
   for (nm in set_cols) {
@@ -133,27 +132,27 @@ upsetly <- function(
       mat[[nm]] <- ifelse(is.na(v) | v == "", 0L, 1L)
     }
   }
-  
+
   # size of each set
   set_sizes <- colSums(mat, na.rm = TRUE)
   if (all(set_sizes == 0)) stop("All set columns are 0; no elements belong to these sets.")
-  
+
   # sort sets by size (descending)
   ord <- order(set_sizes, decreasing = TRUE)
   set_cols  <- set_cols[ord]
   set_sizes <- set_sizes[ord]
-  
+
   set_sizes_df <- tibble::tibble(
     set = factor(names(set_sizes), levels = names(set_sizes)),
     size = as.numeric(set_sizes)
   )
   set_levels <- names(set_sizes)
-  
+
   # combination key for each row
   combo_df <- as.data.frame(mat[, set_cols, drop = FALSE])
   combo_df[[id_col]] <- x[[id_col]]
   combo_df$.combo_key <- apply(as.matrix(mat[, set_cols, drop = FALSE]), 1, paste, collapse = "|")
-  
+
   inter_df <- combo_df %>%
     dplyr::group_by(.combo_key) %>%
     dplyr::summarise(
@@ -162,9 +161,9 @@ upsetly <- function(
       .groups = "drop"
     ) %>%
     dplyr::filter(count >= min_intersection_size)
-  
+
   if (nrow(inter_df) == 0) stop("No intersections with size >= min_intersection_size.")
-  
+
   # expand back to 0/1 per set
   comb_mat_chr <- strsplit(inter_df$.combo_key, "\\|")
   comb_mat <- do.call(rbind, comb_mat_chr)
@@ -172,21 +171,21 @@ upsetly <- function(
   colnames(comb_mat) <- set_cols
   comb_mat <- as.data.frame(comb_mat, stringsAsFactors = FALSE)
   inter_df <- dplyr::bind_cols(inter_df, comb_mat)
-  
+
   # sort by size and apply max_n_intersections
   inter_df <- inter_df %>% dplyr::arrange(desc(count))
   if (!is.null(max_n_intersections)) {
     inter_df <- inter_df[seq_len(min(max_n_intersections, nrow(inter_df))), , drop = FALSE]
   }
   inter_df$combo_index <- seq_len(nrow(inter_df))
-  
+
   # intersection names
   make_name <- function(row) {
     included <- set_cols[as.integer(row[set_cols]) == 1]
     if (length(included) == 0) "Ø" else paste(included, collapse = " & ")
   }
   inter_df$combo_name <- apply(inter_df[, set_cols, drop = FALSE], 1, make_name)
-  
+
   # Members: truncate & wrap
   wrap_members <- function(members_str,
                            n_per_line = 20,
@@ -195,21 +194,21 @@ upsetly <- function(
     v <- trimws(v)
     v <- v[nzchar(v)]
     if (length(v) == 0) return("")
-    
+
     truncated <- FALSE
     if (!is.null(max_ids) && length(v) > max_ids) {
       v <- v[seq_len(max_ids)]
       truncated <- TRUE
     }
-    
+
     idx <- ceiling(seq_along(v) / n_per_line)
     lines <- tapply(v, idx, function(x) paste(x, collapse = ", "))
     out <- paste(lines, collapse = "<br>")
-    
+
     if (truncated) out <- paste0(out, "<br>... (truncated)")
     out
   }
-  
+
   inter_df$members_wrapped <- vapply(
     inter_df$members,
     FUN = wrap_members,
@@ -217,13 +216,13 @@ upsetly <- function(
     n_per_line = members_per_line,
     max_ids = max_n_intersections
   )
-  
+
   inter_df$hover_bar <- paste0(
     "Intersection: ", inter_df$combo_name,
     "<br>Size: ", inter_df$count,
     "<br>Members:<br>", inter_df$members_wrapped
   )
-  
+
   # dot matrix
   dot_df <- tidyr::expand_grid(
     combo_index = inter_df$combo_index,
@@ -240,17 +239,17 @@ upsetly <- function(
         }
       )
     )
-  
+
   y_map <- setNames(seq_along(set_levels), set_levels)
   dot_df$y <- y_map[as.character(dot_df$set)]
-  
+
   dot_df$hover_dot <- paste0(
     "Set: ", dot_df$set,
     "<br>Intersection: ",
     inter_df$combo_name[match(dot_df$combo_index, inter_df$combo_index)],
     "<br>Included: ", ifelse(dot_df$value == 1, "Yes", "No")
   )
-  
+
   seg_df <- dot_df %>%
     dplyr::filter(value == 1) %>%
     dplyr::group_by(combo_index) %>%
@@ -259,9 +258,9 @@ upsetly <- function(
       y_max = max(y),
       .groups = "drop"
     )
-  
+
   fig <- plotly::plot_ly()
-  
+
   # 1) intersection bars
   fig <- fig %>%
     plotly::add_bars(
@@ -274,13 +273,13 @@ upsetly <- function(
       name = "Intersections",
       yaxis = "y1"
     )
-  
+
   # 2) set sizes
   max_size <- max(set_sizes_df$size)
   pretty_breaks <- pretty(c(0, max_size))
   x2_tickvals <- -pretty_breaks
   x2_ticktext <- pretty_breaks
-  
+
   fig <- fig %>%
     plotly::add_bars(
       data = set_sizes_df,
@@ -294,7 +293,7 @@ upsetly <- function(
       xaxis = "x2",
       yaxis = "y2"
     )
-  
+
   # 3) segments
   if (nrow(seg_df) > 0) {
     fig <- fig %>%
@@ -311,7 +310,7 @@ upsetly <- function(
         showlegend = FALSE
       )
   }
-  
+
   # 4) dots
   fig <- fig %>%
     plotly::add_trace(
@@ -330,7 +329,7 @@ upsetly <- function(
       yaxis = "y2",
       showlegend = FALSE
     )
-  
+
   # layout
   fig <- fig %>%
     plotly::layout(
@@ -374,50 +373,59 @@ upsetly <- function(
       height = height,
       width = width
     )
-  
-  # widget id
-  if (is.null(fig$x$attribs$id)) {
-    fig$x$attribs$id <- "upset_plot"
-  }
-  
-  # JS: hover -> 显示全部 tooltip；click -> 锁定；doubleclick -> 解锁并清空
-  js <- "
+
+  # JS：只绑定到指定 box_id，对不到就什么也不做（便于排错）
+  js <- sprintf("
   function(el, x) {
-    var gd = document.getElementById(el.id);
-    if (!gd) return;
-    
+    var boxId = %s;
+    if (!boxId) return;
+
+    var pre = document.getElementById(boxId);
+    if (!pre) return;
+
+    // 在 htmlwidgets 里，el 本身就是 plotly graph div
+    var gd = el;
+
     var locked = false;
-    
+
     function setHoverText(txt, force) {
-      var box = document.getElementById('members_box');
-      if (!box) return;
       if (!force && locked) return;
-      box.textContent = txt;
+      pre.textContent = txt;
     }
-    
-    gd.on('plotly_hover', function(eventData) {
-      if (!eventData || !eventData.points || !eventData.points.length) return;
-      var pt = eventData.points[0];
-      var hoverHtml = pt.hovertext || '';
-      var plain = hoverHtml.replace(/<br\\s*\\/?\\>/gi, '\\n');
-      setHoverText(plain, false);
-    });
-    
-    gd.on('plotly_click', function(eventData) {
-      if (!eventData || !eventData.points || !eventData.points.length) return;
-      var pt = eventData.points[0];
-      var hoverHtml = pt.hovertext || '';
-      var plain = hoverHtml.replace(/<br\\s*\\/?\\>/gi, '\\n');
-      locked = true;
-      setHoverText(plain, true);
-    });
-    
-    gd.on('plotly_doubleclick', function() {
-      locked = false;
-      setHoverText('', true);
-    });
-  }"
-  
+
+    function htmlToPlain(html) {
+      try {
+        return String(html).replace(/<br\\s*\\/?\\>/gi, '\\n');
+      } catch(e) {
+        return String(html);
+      }
+    }
+
+    if (gd && typeof gd.on === 'function') {
+      gd.on('plotly_hover', function(ev) {
+        if (!ev || !ev.points || !ev.points.length) return;
+        var pt = ev.points[0];
+        var txt = htmlToPlain(pt.hovertext || '');
+        setHoverText(txt, false);
+      });
+
+      gd.on('plotly_click', function(ev) {
+        if (!ev || !ev.points || !ev.points.length) return;
+        var pt = ev.points[0];
+        var txt = htmlToPlain(pt.hovertext || '');
+        locked = true;
+        setHoverText(txt, true);
+      });
+
+      gd.on('plotly_doubleclick', function() {
+        locked = false;
+        setHoverText('', true);
+      });
+    }
+  }",
+  if (is.null(box_id)) "null" else sprintf("'%s'", box_id)
+  )
+
   fig <- htmlwidgets::onRender(fig, htmlwidgets::JS(js))
   fig
 }
