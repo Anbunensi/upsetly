@@ -79,22 +79,22 @@
 #'
 #' @export
 upsetly <- function(
-  x,
-  set_cols = NULL,
-  id_col = NULL,
-  min_intersection_size = 1,
-  max_n_intersections = NULL,  # 图上最多显示的交集数
-  point_size = 8,
-  bar_color_sets = "black",
-  bar_color_inters = "black",
-  active_color = "black",
-  inactive_color = "lightgray",
-  line_color = "black",
-  title = "UpSet (plotly)",
-  height = 500,
-  width = NULL,
-  members_per_line = 20,
-  box_id = NULL                 # 要写入的 <pre> 的 id，例如 "gsea_c6"
+                      x,
+                      set_cols = NULL,
+                      id_col = NULL,
+                      min_intersection_size = 1,
+                      max_n_intersections = NULL,  # 图上最多显示的交集数（保留）
+                      point_size = 8,
+                      bar_color_sets = "black",
+                      bar_color_inters = "black",
+                      active_color = "black",
+                      inactive_color = "lightgray",
+                      line_color = "black",
+                      title = "UpSet (plotly)",
+                      height = 500,
+                      width = NULL,
+                      members_per_line = 20,
+                      box_id = NULL                 # 要写入的 <pre> 的 id，例如 "gsea_c6"
 ) {
   if (!requireNamespace("plotly", quietly = TRUE)) {
     stop("Please install the 'plotly' package.")
@@ -203,35 +203,40 @@ upsetly <- function(
     out
   }
 
-  ## 完整版本（给 <pre> 用）+ 图上版本（受 max_n_intersections 控制） --------
+  ## 完整版本（给 <pre> 用）+ 图上版本（可截断） ------------------------------
   inter_df$members_wrapped_all <- vapply(
     inter_df$members,
-    FUN       = wrap_members,
-    FUN.VALUE = character(1),
+    FUN        = wrap_members,
+    FUN.VALUE  = character(1),
     n_per_line = members_per_line,
-    max_ids    = NULL          # 完整
+    max_ids    = NULL          # 完整，不截断
   )
 
   inter_df$members_wrapped <- vapply(
     inter_df$members,
-    FUN       = wrap_members,
-    FUN.VALUE = character(1),
+    FUN        = wrap_members,
+    FUN.VALUE  = character(1),
     n_per_line = members_per_line,
-    max_ids    = max_n_intersections  # 图上可以被截断
+    max_ids    = max_n_intersections  # 图上 tooltip 可以被截断
   )
 
-  ## intersection names -------------------------------------------------------
-  make_name <- function(row) {
+  ## tooltip 用的 hover text：保持原样（可能是截断的 members） -----------------
+  inter_df$combo_name <- apply(inter_df[, set_cols, drop = FALSE], 1, function(row) {
     included <- set_cols[as.integer(row[set_cols]) == 1]
     if (length(included) == 0) "Ø" else paste(included, collapse = " & ")
-  }
-  inter_df$combo_name <- apply(inter_df[, set_cols, drop = FALSE], 1, make_name)
+  })
 
-  ## hover text（仍然可以是截断版）-------------------------------------------
   inter_df$hover_bar <- paste0(
     "Intersection: ", inter_df$combo_name,
     "<br>Size: ", inter_df$count,
     "<br>Members:<br>", inter_df$members_wrapped
+  )
+
+  ## 给 <pre> 用的完整文本：Intersection + Size + 完整 Members ----------------
+  inter_df$full_text_for_pre <- paste0(
+    "Intersection: ", inter_df$combo_name,
+    "<br>Size: ", inter_df$count,
+    "<br>Members:<br>", inter_df$members_wrapped_all
   )
 
   ## 按 size 排序，并只保留前 max_n_intersections 个用于作图 -----------------
@@ -283,51 +288,50 @@ upsetly <- function(
   # 1) intersection bars
   fig <- fig %>%
     plotly::add_bars(
-      data      = inter_df,
-      x         = ~combo_index,
-      y         = ~count,
-      marker    = list(color = bar_color_inters),
-      hovertext = ~hover_bar,
-      hoverinfo = "text",
-      # 完整 members 文本放在 customdata 里，给 JS 用
-      customdata = ~members_wrapped_all,
-      name      = "Intersections",
-      yaxis     = "y1"
+      data       = inter_df,
+      x          = ~combo_index,
+      y          = ~count,
+      marker     = list(color = bar_color_inters),
+      hovertext  = ~hover_bar,              # tooltip 黑框：保持不变
+      hoverinfo  = "text",
+      customdata = ~full_text_for_pre,      # <pre> 用完整文本
+      name       = "Intersections",
+      yaxis      = "y1"
     )
 
   # 2) set sizes
-  max_size     <- max(set_sizes_df$size)
+  max_size      <- max(set_sizes_df$size)
   pretty_breaks <- pretty(c(0, max_size))
   x2_tickvals   <- -pretty_breaks
   x2_ticktext   <- pretty_breaks
 
   fig <- fig %>%
     plotly::add_bars(
-      data       = set_sizes_df,
-      x          = ~(-size),
-      y          = ~as.numeric(set),
+      data        = set_sizes_df,
+      x           = ~(-size),
+      y           = ~as.numeric(set),
       orientation = "h",
-      marker     = list(color = bar_color_sets),
-      hovertext  = ~paste0(as.character(set), "<br>Numbers: ", size),
-      hoverinfo  = "text",
-      name       = "Set size",
-      xaxis      = "x2",
-      yaxis      = "y2"
+      marker      = list(color = bar_color_sets),
+      hovertext   = ~paste0(as.character(set), "<br>Numbers: ", size),
+      hoverinfo   = "text",
+      name        = "Set size",
+      xaxis       = "x2",
+      yaxis       = "y2"
     )
 
   # 3) segments
   if (nrow(seg_df) > 0) {
     fig <- fig %>%
       plotly::add_segments(
-        data      = seg_df,
-        x         = ~combo_index,
-        xend      = ~combo_index,
-        y         = ~y_min,
-        yend      = ~y_max,
-        line      = list(color = line_color, width = 1),
-        hoverinfo = "none",
-        xaxis     = "x1",
-        yaxis     = "y2",
+        data       = seg_df,
+        x          = ~combo_index,
+        xend       = ~combo_index,
+        y          = ~y_min,
+        yend       = ~y_max,
+        line       = list(color = line_color, width = 1),
+        hoverinfo  = "none",
+        xaxis      = "x1",
+        yaxis      = "y2",
         showlegend = FALSE
       )
   }
@@ -335,19 +339,19 @@ upsetly <- function(
   # 4) dots
   fig <- fig %>%
     plotly::add_trace(
-      data      = dot_df,
-      x         = ~combo_index,
-      y         = ~y,
-      type      = "scatter",
-      mode      = "markers",
-      marker    = ~list(
+      data       = dot_df,
+      x          = ~combo_index,
+      y          = ~y,
+      type       = "scatter",
+      mode       = "markers",
+      marker     = ~list(
         color = ifelse(value == 1, active_color, inactive_color),
         size  = point_size
       ),
-      hovertext = ~hover_dot,
-      hoverinfo = "text",
-      xaxis     = "x1",
-      yaxis     = "y2",
+      hovertext  = ~hover_dot,
+      hoverinfo  = "text",
+      xaxis      = "x1",
+      yaxis      = "y2",
       showlegend = FALSE
     )
 
@@ -395,7 +399,7 @@ upsetly <- function(
       width  = width
     )
 
-  ## JS：使用 box_id 对应的 <pre>，hover 用 hovertext，click 用 customdata(完整) ----
+  ## JS：tooltip 黑框不变；<pre> 显示完整 Intersection + Size + Members -------
   js <- sprintf("
   function(el, x) {
     var boxId = %s;
@@ -416,35 +420,40 @@ upsetly <- function(
 
     function htmlToPlain(html) {
       try {
-        return String(html).replace(/<br\\s*\\/?\\>/gi, '\\n');
+        return String(html || '').replace(/<br\\s*\\/?\\>/gi, '\\n');
       } catch(e) {
-        return String(html);
+        return String(html || '');
       }
     }
 
     if (gd && typeof gd.on === 'function') {
+      // hover：<pre> 中显示完整信息（来自 customdata），tooltip 仍用 hovertext
       gd.on('plotly_hover', function(ev) {
         if (!ev || !ev.points || !ev.points.length) return;
         var pt  = ev.points[0];
-        var txt = htmlToPlain(pt.hovertext || '');
-        setHoverText(txt, false);     // hover: 图上的（可截断）
+
+        var fullHtml = pt.customdata || pt.hovertext || '';
+        var txt      = htmlToPlain(fullHtml);
+
+        setHoverText(txt, false);
       });
 
+      // click：锁定当前 intersection 的完整信息
       gd.on('plotly_click', function(ev) {
         if (!ev || !ev.points || !ev.points.length) return;
         var pt = ev.points[0];
 
-        // 完整 members 文本在 customdata 里
         var fullHtml = pt.customdata || pt.hovertext || '';
         var txt      = htmlToPlain(fullHtml);
 
         locked = true;
-        setHoverText(txt, true);      // click: 写入完整文本
+        setHoverText(txt, true);
       });
 
+      // double click：清空并解锁
       gd.on('plotly_doubleclick', function() {
         locked = false;
-        setHoverText('', true);       // double click: 清空并解锁
+        setHoverText('', true);
       });
     }
   }",
