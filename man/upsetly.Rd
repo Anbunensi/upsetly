@@ -113,6 +113,7 @@ p <- upsetly(
   x = df,
   set_cols = c("A", "B", "C"),
   id_col = "gene",
+  box_id = "members_box",
   max_n_intersections = 50,
   members_per_line = 10
 )
