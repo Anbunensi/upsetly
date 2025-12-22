@@ -29,7 +29,7 @@ Given a data frame with:
 
 - one ID column (e.g. `gene`), and  
 - several 0/1 (or logical / character) columns indicating membership in sets  
-  (e.g. comparisons `C_vs_D`, `C_vs_F`, …),
+  (e.g. comparisons `A_vs_B & B_vs_C`, …),
 
 `upsetly()` will:
 
@@ -41,7 +41,7 @@ Given a data frame with:
    - **Top bar chart**: size of each intersection.  
    - **Bottom dot matrix**: which sets are present in each intersection.  
 5. Build rich tooltip text for each intersection, including:
-   - Intersection name (e.g. `C_vs_D & D_vs_F`)  
+   - Intersection name (e.g. `A_vs_B & B_vs_C`)  
    - Intersection size  
    - Members (element IDs), wrapped onto multiple lines.
 
